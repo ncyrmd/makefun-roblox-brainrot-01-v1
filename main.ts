@@ -13,13 +13,56 @@
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { copyFileSync, cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-roblox.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+
+/**
+ * Brainrot Bay entry preflight, written for this game (not part of the kit starter):
+ * refuse to hand in an entry the gate would refuse on its face — a missing or
+ * XML-format place, the wrong number of screenshots, or an unreadable PLAY.json —
+ * so a broken build fails loudly here instead of silently at grading time.
+ */
+function validateBrainrotBayEntry(): void {
+  const placePath = join(here, 'game.rbxl');
+  const place = readFileSync(placePath);
+  if (place.length < 8 || place.subarray(0, 8).toString('latin1') !== '<roblox!') {
+    throw new Error('game.rbxl is not a binary Roblox place (expected <roblox! magic)');
+  }
+  if (place.length > 32 * 1024 * 1024) {
+    throw new Error(`game.rbxl is ${place.length} bytes, over the 32 MiB gate cap`);
+  }
+  const shots = readdirSync(join(here, 'screenshots')).filter((n) => !n.startsWith('.'));
+  if (shots.length < 3 || shots.length > 4) {
+    throw new Error(`screenshots/ holds ${shots.length} images, the gate wants 3 or 4`);
+  }
+  for (const shot of shots) {
+    const size = statSync(join(here, 'screenshots', shot)).size;
+    if (size > 256 * 1024) throw new Error(`${shot} is ${size} bytes, over the 256 KiB cap`);
+  }
+  const play = JSON.parse(readFileSync(join(here, 'PLAY.json'), 'utf8')) as {
+    url: string;
+    place_id: number;
+    universe_id: number;
+  };
+  if (typeof play.url !== 'string' || !play.url.startsWith('https://www.roblox.com/games/')) {
+    throw new Error('PLAY.json url is not a Roblox games link');
+  }
+  if (play.place_id === 0 || play.universe_id === 0) {
+    // Expected until Nicky publishes the experience: warn, do not fail, so the
+    // local build and dossier still verify end to end before publish day.
+    console.warn('Brainrot Bay: PLAY.json still holds placeholder ids (0) — publish is pending.');
+  }
+  console.log(
+    `Brainrot Bay entry validated: place ${place.length} bytes, ${shots.length} screenshots, PLAY ${play.url}`,
+  );
+}
+
+validateBrainrotBayEntry();
 
 /** cpSync's filter: leave out every file and directory whose name starts with a dot (.gitkeep, .DS_Store, .git). */
 const notDotted = (path: string): boolean => !basename(path).startsWith('.');
